@@ -1,0 +1,95 @@
+# wan zheng yang ben
+# Import the Python libraries
+import time
+import random
+import numpy as np
+import csv
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from scipy.stats import zscore
+from bls.processing.replaceNan import replaceNan
+from bls.processing.one_hot_m import one_hot_m
+from bls.model.bls_incremental import bls_incremental
+#from bls.model.bls_train_fscore_incremental import bls_train_fscore_incremental
+from math import ceil
+
+seed = 1 # set the seed for generating random numbers
+num_class = 6 # number of the classes
+
+# Load the datasets
+dataset = pd.read_csv('./feature_all_.csv', quoting=csv.QUOTE_NONE)#Small sample size, 15 samples per label
+dataset = np.array(dataset)
+train_dataset, test_dataset = train_test_split(dataset, test_size=0.2)
+
+# Normalize training data
+train_x = train_dataset[:, 0:train_dataset.shape[1] - 1] #选择train_dataset中除了最后2列之外的所有列，即特征列，作为训练数据。
+train_x = zscore(train_x, axis=0, ddof=1) # 对训练数据进行标准化，使得每个特征的均值为0，标准差为1。
+replaceNan(train_x)                           # Replace "nan" with 0
+train_y = train_dataset[:, train_dataset.shape[1] - 1: train_dataset.shape[1]] #选择train_dataset中最后一列作为训练标签。
+
+# Change training labels
+inds1 = np.where(train_y == 0) #找到训练标签中等于0的位置。
+train_y[inds1] = 6 #将训练标签中等于0的值替换为15。
+
+# Normalize test data
+test_x = test_dataset[:, 0:test_dataset.shape[1] - 1]
+test_x = zscore(test_x, axis=0, ddof=1)  # For each feature, mean = 0 and std = 1
+replaceNan(test_x)							 # Replace "nan" with 0
+test_y = test_dataset[:, test_dataset.shape[1] - 1: test_dataset.shape[1]]
+
+# Change test labels
+inds1 = np.where(test_y == 0)
+test_y[inds1] = 6
+
+train_y = one_hot_m(train_y, num_class)
+test_y = one_hot_m(test_y, num_class)
+
+# BLS parameters 
+C = 2**-28 # parameter for sparse regularization稀疏正则化参数
+s = 0.8     # the shrinkage parameter for enhancement nodes 增强节点的收缩参数
+
+# N1* - the number of mapped feature nodes
+# N2* - the groups of mapped features
+# N3* - the number of enhancement nodes
+
+N1_bls = 10
+N2_bls = 20
+N3_bls = 1000
+
+
+epochs = 1 # number of epochs
+inputData = ceil(train_x.shape[0]*0.05)
+
+# BLS parameters for incremental learning
+l = 1    # steps
+m2 = 200  # 20,40, additional enhancement nodes for each step
+
+train_xf = train_x # the entire training dataset
+train_yf = train_y # the entire training labels
+
+train_x = train_xf[:(int)(inputData), :] # training data at the beginning of the incremental learning
+train_y = train_yf[:(int)(inputData), :] # training labels at the beginning of the incremental learning
+
+m = int(ceil((train_xf.shape[0] - inputData) / l)) # the number of added data points/step
+
+print("Incremental step is: ", l)
+
+train_err = np.zeros((1, epochs))
+test_err = np.zeros((1, epochs))
+train_time = np.zeros((1, epochs))
+test_time = np.zeros((1, epochs))
+
+# # BLS ----------------------------------------------------------------
+print("================== BLS (incremental)===========================\n\n")
+
+np.random.seed(seed) # set the seed for generating random numbers
+for j in range(0, epochs):
+	TrainingAccuracy, TestingAccuracy, Training_time, Testing_time, f_score, pre, recall = \
+		bls_incremental(train_x, train_y, train_xf, train_yf, test_x, test_y, s, C,
+						N1_bls, N2_bls, N3_bls, inputData, m, m2, l)
+
+print("BLS Train Acc: ", TrainingAccuracy * 100, "% BLS Test Acc: ", TestingAccuracy * 100,
+	  "\n%  fscore: ", f_score, "%  Precision: ", pre, "%  Recall: ", recall,
+	  "\ns  Training time: ", Training_time, "s", "s Testing time: ", Testing_time)
+
+print("End of the execution")
